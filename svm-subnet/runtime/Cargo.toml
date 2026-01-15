@@ -26,6 +26,10 @@ name = "gpu_bench"
 path = "src/bin/gpu_bench.rs"
 required-features = ["cuda"]
 
+[[bin]]
+name = "qmdb_bench"
+path = "src/bin/qmdb_bench.rs"
+
 [features]
 default = []
 cuda = ["cudarc"]
