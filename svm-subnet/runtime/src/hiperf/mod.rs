@@ -38,6 +38,8 @@
 //! ```
 
 mod batch_verifier;
+#[cfg(feature = "cuda")]
+mod cuda_executor;
 mod fast_scheduler;
 mod gpu_verifier;
 mod incremental_merkle;
@@ -50,6 +52,8 @@ mod simd_hash;
 mod turbo_executor;
 
 pub use batch_verifier::*;
+#[cfg(feature = "cuda")]
+pub use cuda_executor::*;
 pub use fast_scheduler::*;
 pub use gpu_verifier::*;
 pub use incremental_merkle::*;
