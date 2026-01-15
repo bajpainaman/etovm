@@ -170,15 +170,17 @@ extern "C" __global__ void sha256_batch_hash(
             // Compile Ed25519 verification kernel
             let verify_ptx = compile_ptx(ED25519_VERIFY_KERNEL)?;
             device.load_ptx(verify_ptx, "ed25519", &["ed25519_batch_verify"])?;
-            let verify_kernel = device.get_func("ed25519", "ed25519_batch_verify")?;
+            let verify_kernel = device.get_func("ed25519", "ed25519_batch_verify")
+                .ok_or("Failed to get ed25519 kernel")?;
 
             // Compile SHA256 kernel
             let sha256_ptx = compile_ptx(SHA256_BATCH_KERNEL)?;
             device.load_ptx(sha256_ptx, "sha256", &["sha256_batch_hash"])?;
-            let sha256_kernel = device.get_func("sha256", "sha256_batch_hash")?;
+            let sha256_kernel = device.get_func("sha256", "sha256_batch_hash")
+                .ok_or("Failed to get sha256 kernel")?;
 
             Ok(Self {
-                device: Arc::new(device),
+                device,
                 verify_kernel,
                 sha256_kernel,
             })
