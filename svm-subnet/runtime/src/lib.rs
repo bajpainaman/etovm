@@ -2,6 +2,7 @@ pub mod types;
 pub mod error;
 pub mod accounts;
 pub mod qmdb_state;
+pub mod real_qmdb_state;
 pub mod sysvars;
 pub mod programs;
 pub mod executor;
@@ -33,6 +34,7 @@ pub use sealevel::{
 pub use qmdb_state::{
     InMemoryQMDBState, QMDBState, QMDBStateConfig, StateChangeSet, BlockStateBatch,
 };
+pub use real_qmdb_state::{RealQmdbState, QmdbParallelExecutorV2};
 pub use hiperf::{
     TurboExecutor, TurboConfig, TurboBlockResult, TurboTiming, TurboStats,
     BatchVerifier, VerificationResult,
