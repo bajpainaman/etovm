@@ -8,7 +8,7 @@
 #[cfg(feature = "cuda")]
 pub mod gpu_ed25519 {
     use cudarc::driver::{CudaDevice, LaunchAsync, LaunchConfig};
-    use cudarc::nvrtc::compile_ptx;
+    use cudarc::nvrtc::compile_ptx_with_opts;
     use std::sync::Arc;
 
     /// CUDA kernel for Ed25519 batch verification
@@ -344,8 +344,12 @@ extern "C" __global__ void ed25519_batch_verify_full(
         pub fn new(device_id: usize) -> Result<Self, Box<dyn std::error::Error>> {
             let device = CudaDevice::new(device_id)?;
 
-            // Compile kernel
-            let ptx = compile_ptx(ED25519_KERNEL)?;
+            // Compile kernel with --device-int128 for 128-bit integer support
+            let compile_opts = cudarc::nvrtc::CompileOptions {
+                options: vec!["--device-int128".to_string()],
+                ..Default::default()
+            };
+            let ptx = compile_ptx_with_opts(ED25519_KERNEL, compile_opts)?;
             device.load_ptx(ptx, "ed25519_full", &["ed25519_batch_verify_full"])?;
             let verify_kernel = device.get_func("ed25519_full", "ed25519_batch_verify_full")
                 .ok_or("Failed to get ed25519 kernel")?;
