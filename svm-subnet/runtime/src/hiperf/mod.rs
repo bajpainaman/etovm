@@ -39,18 +39,24 @@
 
 mod batch_verifier;
 mod fast_scheduler;
+mod gpu_verifier;
 mod incremental_merkle;
 mod memory_pool;
 mod parallel_merkle;
 mod pipeline;
+mod pipelined_executor;
+mod preverify_mempool;
 mod simd_hash;
 mod turbo_executor;
 
 pub use batch_verifier::*;
 pub use fast_scheduler::*;
+pub use gpu_verifier::*;
 pub use incremental_merkle::*;
 pub use memory_pool::*;
 pub use parallel_merkle::*;
 pub use pipeline::*;
+pub use pipelined_executor::*;
+pub use preverify_mempool::*;
 pub use simd_hash::*;
 pub use turbo_executor::*;

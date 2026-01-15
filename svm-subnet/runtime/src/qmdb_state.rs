@@ -244,6 +244,18 @@ impl InMemoryQMDBState {
         }
     }
 
+    /// Add a pre-merged changeset to the current block (for parallel merge optimization)
+    pub fn add_merged_changes(&self, merged: StateChangeSet) -> RuntimeResult<()> {
+        let mut pending = self.pending_batch.lock();
+        match pending.as_mut() {
+            Some(batch) => {
+                batch.add_changeset(merged);
+                Ok(())
+            }
+            None => Err(RuntimeError::State("No block in progress".to_string())),
+        }
+    }
+
     /// Commit the current block
     pub fn commit_block(&self) -> RuntimeResult<[u8; 32]> {
         let batch = {
@@ -390,6 +402,7 @@ impl Default for InMemoryQMDBState {
 pub trait QMDBState: Send + Sync {
     fn begin_block(&self, height: u64) -> RuntimeResult<()>;
     fn add_tx_changes(&self, changeset: StateChangeSet) -> RuntimeResult<()>;
+    fn add_merged_changes(&self, merged: StateChangeSet) -> RuntimeResult<()>;
     fn commit_block(&self) -> RuntimeResult<[u8; 32]>;
     fn abort_block(&self) -> RuntimeResult<()>;
     fn get_account(&self, pubkey: &Pubkey) -> RuntimeResult<Option<Account>>;
@@ -406,6 +419,10 @@ impl QMDBState for InMemoryQMDBState {
 
     fn add_tx_changes(&self, changeset: StateChangeSet) -> RuntimeResult<()> {
         self.add_tx_changes(changeset)
+    }
+
+    fn add_merged_changes(&self, merged: StateChangeSet) -> RuntimeResult<()> {
+        self.add_merged_changes(merged)
     }
 
     fn commit_block(&self) -> RuntimeResult<[u8; 32]> {

@@ -10,19 +10,15 @@
 //! - SIMD-accelerated hashing
 //! - Cache-optimized data structures
 
-use super::{
-    ArenaPool, BatchVerifier, ExecutionPipeline, FastScheduler, PipelineConfig, PipelineStats,
-    SkipVerifier, VerificationResult,
-};
-use crate::error::{RuntimeError, RuntimeResult};
-use crate::executor::{ExecutionContext, ExecutionResult, ExecutorConfig};
+use super::{ArenaPool, BatchVerifier, FastScheduler, SkipVerifier};
+use crate::error::RuntimeResult;
+use crate::executor::ExecutionContext;
 use crate::qmdb_state::{InMemoryQMDBState, StateChangeSet};
 use crate::sealevel::{AccessSet, TransactionBatch};
 use crate::types::{Account, Pubkey, Transaction};
 use crossbeam_utils::CachePadded;
 use parking_lot::RwLock;
 use rayon::prelude::*;
-use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -245,12 +241,20 @@ impl TurboExecutor {
         }
         timing.execute_us = exec_start.elapsed().as_micros() as u64;
 
-        // === STAGE 5: Commit Changesets ===
+        // === STAGE 5: Commit Changesets (Parallel Merge) ===
         let commit_start = std::time::Instant::now();
         let all_changesets = changesets.into_inner();
-        for changeset in all_changesets {
-            self.state.add_tx_changes(changeset)?;
-        }
+
+        // Parallel merge: O(n/p) instead of sequential O(n)
+        let merged = all_changesets
+            .into_par_iter()
+            .reduce(
+                StateChangeSet::new,
+                |mut acc, cs| { acc.merge(cs); acc }
+            );
+
+        // Single atomic commit
+        self.state.add_merged_changes(merged)?;
         timing.commit_us = commit_start.elapsed().as_micros() as u64;
 
         // === STAGE 6: Merkle Root Computation ===
@@ -273,6 +277,106 @@ impl TurboExecutor {
             successful,
             failed,
             verification_failures: verification.num_invalid,
+            total_compute_units: counters.compute_units.load(Ordering::Relaxed),
+            total_fees: counters.fees.load(Ordering::Relaxed),
+            timing,
+        })
+    }
+
+    /// Execute a block with pre-verified transactions (ZERO verification overhead)
+    ///
+    /// Use this with PreVerifyMempool for maximum throughput.
+    /// Verification was already done in background as transactions arrived.
+    pub fn execute_preverified_block(
+        &self,
+        block_height: u64,
+        transactions: &[Transaction],
+        ctx: &ExecutionContext,
+    ) -> RuntimeResult<TurboBlockResult> {
+        let total_start = std::time::Instant::now();
+        let mut timing = TurboTiming::default();
+
+        if transactions.is_empty() {
+            return Ok(TurboBlockResult {
+                merkle_root: self.state.merkle_root()?,
+                block_height,
+                successful: 0,
+                failed: 0,
+                verification_failures: 0,
+                total_compute_units: 0,
+                total_fees: 0,
+                timing,
+            });
+        }
+
+        // Begin QMDB block
+        self.state.begin_block(block_height)?;
+
+        // === SKIP STAGE 1: Already verified in mempool ===
+        timing.verify_us = 0;
+
+        // === STAGE 2: Parallel Access Set Analysis ===
+        let analyze_start = std::time::Instant::now();
+        let (access_sets, valid_indices): (Vec<AccessSet>, Vec<usize>) = transactions
+            .par_iter()
+            .enumerate()
+            .map(|(i, tx)| (AccessSet::from_transaction(tx), i))
+            .unzip();
+        timing.analyze_us = analyze_start.elapsed().as_micros() as u64;
+
+        // === STAGE 3: Batch Scheduling (Fast Path) ===
+        let schedule_start = std::time::Instant::now();
+        let batches = self.scheduler.schedule(&access_sets);
+        timing.schedule_us = schedule_start.elapsed().as_micros() as u64;
+
+        // === STAGE 4: Parallel Execution ===
+        let exec_start = std::time::Instant::now();
+        let counters = AtomicCounters::new();
+        let changesets: RwLock<Vec<StateChangeSet>> = RwLock::new(Vec::new());
+
+        for batch in &batches {
+            self.execute_batch_turbo(
+                transactions,
+                &valid_indices,
+                batch,
+                ctx,
+                &counters,
+                &changesets,
+            );
+        }
+        timing.execute_us = exec_start.elapsed().as_micros() as u64;
+
+        // === STAGE 5: Commit Changesets (Parallel Merge) ===
+        let commit_start = std::time::Instant::now();
+        let all_changesets = changesets.into_inner();
+        let merged = all_changesets
+            .into_par_iter()
+            .reduce(
+                StateChangeSet::new,
+                |mut acc, cs| { acc.merge(cs); acc }
+            );
+        self.state.add_merged_changes(merged)?;
+        timing.commit_us = commit_start.elapsed().as_micros() as u64;
+
+        // === STAGE 6: Merkle Root Computation ===
+        let merkle_start = std::time::Instant::now();
+        let merkle_root = self.state.commit_block()?;
+        timing.merkle_us = merkle_start.elapsed().as_micros() as u64;
+
+        timing.total_us = total_start.elapsed().as_micros() as u64;
+
+        let successful = counters.successful.load(Ordering::Relaxed);
+        let failed = counters.failed.load(Ordering::Relaxed);
+
+        self.total_txs.fetch_add(transactions.len() as u64, Ordering::Relaxed);
+        self.total_blocks.fetch_add(1, Ordering::Relaxed);
+
+        Ok(TurboBlockResult {
+            merkle_root,
+            block_height,
+            successful,
+            failed,
+            verification_failures: 0, // Pre-verified
             total_compute_units: counters.compute_units.load(Ordering::Relaxed),
             total_fees: counters.fees.load(Ordering::Relaxed),
             timing,

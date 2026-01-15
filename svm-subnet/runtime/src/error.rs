@@ -79,6 +79,9 @@ pub enum RuntimeError {
 
     #[error("Cross-VM call failed: {0}")]
     CrossVmCallFailed(String),
+
+    #[error("Mempool error: {0}")]
+    Mempool(String),
 }
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
