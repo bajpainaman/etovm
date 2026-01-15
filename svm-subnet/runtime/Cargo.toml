@@ -1,0 +1,99 @@
+[package]
+name = "svm-runtime"
+version = "0.1.0"
+edition = "2021"
+authors = ["Naman Bajpai"]
+description = "Solana Virtual Machine runtime for Avalanche subnet - Hybrid SVM+EVM"
+
+[lib]
+name = "svm_runtime"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[[bin]]
+name = "benchmark"
+path = "src/bin/benchmark.rs"
+
+[[bin]]
+name = "max_tps"
+path = "src/bin/max_tps.rs"
+
+[[bin]]
+name = "turbo_bench"
+path = "src/bin/turbo_bench.rs"
+
+[dependencies]
+# Serialization
+borsh = { version = "1.3", features = ["derive"] }
+bincode = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bs58 = "0.5"
+
+# FFI
+libc = "0.2"
+
+# Error handling
+thiserror = "1.0"
+
+# Logging
+log = "0.4"
+
+# Crypto - with batch verification and SIMD
+ed25519-dalek = { version = "2.1", features = ["rand_core", "batch", "digest"] }
+sha2 = { version = "0.10", features = ["asm"] }  # SIMD/ASM acceleration
+sha3 = "0.10"
+rand = "0.8"
+curve25519-dalek = { version = "4.1", features = ["alloc"] }
+
+# High-performance hashing (SHA-NI, AVX2, NEON auto-detected)
+ring = "0.17"
+
+# Parallelism (Sealevel + High-Performance)
+rayon = "1.10"
+crossbeam-channel = "0.5"
+crossbeam-utils = "0.8"
+crossbeam-queue = "0.3"
+dashmap = "6.0"
+flume = "0.11"
+tokio = { version = "1.35", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+# High-Performance Data Structures
+arrayvec = "0.7"
+smallvec = { version = "1.13", features = ["union", "const_generics"] }
+bumpalo = { version = "3.14", features = ["collections"] }
+
+# Utilities
+parking_lot = "0.12"
+crossbeam-epoch = "0.9"
+lazy_static = "1.4"
+serde_bytes = "0.11"
+byteorder = "1.5"
+num-traits = "0.2"
+primitive-types = { version = "0.13", features = ["serde"] }
+hex = "0.4"
+
+# EVM execution
+revm = { version = "19", default-features = false, features = ["std"] }
+alloy-primitives = "0.8"
+
+# QMDB - Quick Merkle Database for high-performance state storage
+qmdb = { git = "https://github.com/LayerZero-Labs/qmdb.git", branch = "main" }
+hpfile = { git = "https://github.com/LayerZero-Labs/qmdb.git", branch = "main" }
+
+[build-dependencies]
+cbindgen = "0.26"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# Enable native CPU features (AVX2, SHA-NI, etc.)
+[profile.release.build-override]
+opt-level = 3
+
+# For maximum performance, build with:
+# RUSTFLAGS="-C target-cpu=native" cargo build --release

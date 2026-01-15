@@ -1,0 +1,80 @@
+{
+  "timestamp": 1704067200,
+  "chainId": 43114,
+  "networkId": 1,
+  "accounts": [
+    {
+      "pubkey": "11111111111111111111111111111111",
+      "lamports": 1,
+      "data": "c3lzdGVtX3Byb2dyYW0=",
+      "owner": "NativeLoader1111111111111111111111111111111",
+      "executable": true
+    },
+    {
+      "pubkey": "BPFLoader2111111111111111111111111111111111",
+      "lamports": 1,
+      "data": "YnBmX2xvYWRlcg==",
+      "owner": "NativeLoader1111111111111111111111111111111",
+      "executable": true
+    },
+    {
+      "pubkey": "NativeLoader1111111111111111111111111111111",
+      "lamports": 1,
+      "data": "bmF0aXZlX2xvYWRlcg==",
+      "owner": "NativeLoader1111111111111111111111111111111",
+      "executable": true
+    },
+    {
+      "pubkey": "SysvarC1ock11111111111111111111111111111111",
+      "lamports": 1,
+      "data": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    },
+    {
+      "pubkey": "SysvarRent111111111111111111111111111111111",
+      "lamports": 1,
+      "data": "mA0AAAAAAAAAAAAAAAAAAEAY",
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    },
+    {
+      "pubkey": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "lamports": 1,
+      "data": "c3BsX3Rva2Vu",
+      "owner": "BPFLoader2111111111111111111111111111111111",
+      "executable": true
+    },
+    {
+      "pubkey": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "lamports": 1,
+      "data": "YXNzb2NpYXRlZF90b2tlbg==",
+      "owner": "BPFLoader2111111111111111111111111111111111",
+      "executable": true
+    },
+    {
+      "pubkey": "Faucet11111111111111111111111111111111111111",
+      "lamports": 1000000000000000,
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    },
+    {
+      "pubkey": "Test1111111111111111111111111111111111111111",
+      "lamports": 100000000000,
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    },
+    {
+      "pubkey": "Test2222222222222222222222222222222222222222",
+      "lamports": 100000000000,
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    },
+    {
+      "pubkey": "Test3333333333333333333333333333333333333333",
+      "lamports": 100000000000,
+      "owner": "11111111111111111111111111111111",
+      "executable": false
+    }
+  ]
+}
