@@ -40,6 +40,8 @@
 mod batch_verifier;
 #[cfg(feature = "cuda")]
 mod cuda_executor;
+#[cfg(feature = "cuda")]
+mod cuda_ed25519;
 mod fast_scheduler;
 mod gpu_verifier;
 mod incremental_merkle;
@@ -54,6 +56,8 @@ mod turbo_executor;
 pub use batch_verifier::*;
 #[cfg(feature = "cuda")]
 pub use cuda_executor::*;
+#[cfg(feature = "cuda")]
+pub use cuda_ed25519::*;
 pub use fast_scheduler::*;
 pub use gpu_verifier::*;
 pub use incremental_merkle::*;
