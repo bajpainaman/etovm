@@ -8,10 +8,11 @@
 //! 3. Full merkle root computation
 
 #[cfg(feature = "cuda")]
-use svm_runtime::hiperf::{CudaExecutor, MultiGpuExecutor};
+use svm_runtime::hiperf::{CudaExecutor, GpuEd25519Verifier};
 
 use sha2::{Sha256, Digest};
 use std::time::Instant;
+use ed25519_dalek::{SigningKey, Signer, VerifyingKey, Signature, Verifier};
 
 fn main() {
     println!();
@@ -87,6 +88,28 @@ fn run_gpu_benchmarks() {
     println!();
 
     compare_gpu_cpu(&executor, 1_000_000);
+
+    // =========================================================================
+    // Benchmark 4: GPU Ed25519 Signature Verification
+    // =========================================================================
+    println!();
+    println!("═══════════════════════════════════════════════════════════════════════");
+    println!("                   BENCHMARK 4: GPU Ed25519 VERIFICATION                ");
+    println!("═══════════════════════════════════════════════════════════════════════");
+    println!();
+
+    for batch_size in [1_000, 10_000, 100_000] {
+        benchmark_ed25519_gpu(batch_size);
+    }
+
+    // Compare GPU vs CPU Ed25519
+    println!();
+    println!("═══════════════════════════════════════════════════════════════════════");
+    println!("                   BENCHMARK 5: GPU vs CPU Ed25519                      ");
+    println!("═══════════════════════════════════════════════════════════════════════");
+    println!();
+
+    compare_ed25519_gpu_cpu(50_000);
 
     println!();
     println!("╔══════════════════════════════════════════════════════════════════════╗");
@@ -213,5 +236,146 @@ fn compare_gpu_cpu(executor: &CudaExecutor, batch_size: usize) {
     println!("│");
     println!("│ CPU Throughput: {:>10.2}M hashes/sec", batch_size as f64 / cpu_time.as_secs_f64() / 1_000_000.0);
     println!("│ GPU Throughput: {:>10.2}M hashes/sec", batch_size as f64 / gpu_time.as_secs_f64() / 1_000_000.0);
+    println!("└─────────────────────────────────────────────────────────────────┘");
+}
+
+/// Generate valid Ed25519 signatures for benchmarking
+fn generate_ed25519_batch(count: usize) -> (Vec<[u8; 32]>, Vec<[u8; 64]>, Vec<[u8; 32]>) {
+    use rand::rngs::OsRng;
+
+    let mut messages = Vec::with_capacity(count);
+    let mut signatures = Vec::with_capacity(count);
+    let mut pubkeys = Vec::with_capacity(count);
+
+    for i in 0..count {
+        // Generate keypair
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create message (32 bytes - typical transaction hash)
+        let mut msg = [0u8; 32];
+        msg[0..8].copy_from_slice(&(i as u64).to_le_bytes());
+
+        // Sign
+        let sig = signing_key.sign(&msg);
+
+        messages.push(msg);
+        signatures.push(sig.to_bytes());
+        pubkeys.push(verifying_key.to_bytes());
+    }
+
+    (messages, signatures, pubkeys)
+}
+
+#[cfg(feature = "cuda")]
+fn benchmark_ed25519_gpu(batch_size: usize) {
+    println!("┌─────────────────────────────────────────────────────────────────┐");
+    println!("│ Ed25519 GPU Verification: {} signatures", batch_size);
+    println!("├─────────────────────────────────────────────────────────────────┤");
+
+    // Generate valid signatures
+    print!("│ Generating {} valid signatures... ", batch_size);
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let gen_start = Instant::now();
+    let (messages, signatures, pubkeys) = generate_ed25519_batch(batch_size);
+    println!("{:.2}s", gen_start.elapsed().as_secs_f64());
+
+    // Initialize GPU verifier
+    print!("│ Initializing GPU Ed25519 verifier... ");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let init_start = Instant::now();
+    let verifier = match GpuEd25519Verifier::new(0) {
+        Ok(v) => {
+            println!("{:.2}s", init_start.elapsed().as_secs_f64());
+            v
+        }
+        Err(e) => {
+            println!("FAILED: {}", e);
+            return;
+        }
+    };
+
+    // GPU verification
+    print!("│ GPU verifying {} signatures... ", batch_size);
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let gpu_start = Instant::now();
+    let results = verifier.batch_verify(&messages, &signatures, &pubkeys)
+        .expect("GPU verification failed");
+    let gpu_time = gpu_start.elapsed();
+    println!("{:.2}s", gpu_time.as_secs_f64());
+
+    let valid_count = results.iter().filter(|&&v| v).count();
+    let verify_rate = batch_size as f64 / gpu_time.as_secs_f64();
+
+    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("│ Valid:         {}/{} signatures", valid_count, batch_size);
+    println!("│ GPU Time:      {:.2}ms", gpu_time.as_millis());
+    println!("│ Throughput:    {:.0} verifications/sec", verify_rate);
+    println!("│ Throughput:    {:.2}M verifications/sec", verify_rate / 1_000_000.0);
+
+    // Calculate TPS impact (50% of time is verification)
+    let tps_capacity = verify_rate;
+    println!("│ TPS Capacity:  {:.2}M TPS (verify only)", tps_capacity / 1_000_000.0);
+    println!("└─────────────────────────────────────────────────────────────────┘");
+    println!();
+}
+
+#[cfg(feature = "cuda")]
+fn compare_ed25519_gpu_cpu(batch_size: usize) {
+    println!("┌─────────────────────────────────────────────────────────────────┐");
+    println!("│ GPU vs CPU Ed25519 Verification: {} signatures", batch_size);
+    println!("├─────────────────────────────────────────────────────────────────┤");
+
+    // Generate valid signatures
+    print!("│ Generating {} valid signatures... ", batch_size);
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let (messages, signatures, pubkeys) = generate_ed25519_batch(batch_size);
+    println!("done");
+
+    // CPU verification (parallel with rayon)
+    print!("│ CPU verifying (rayon parallel)... ");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let cpu_start = Instant::now();
+    use rayon::prelude::*;
+    let _cpu_results: Vec<bool> = (0..batch_size)
+        .into_par_iter()
+        .map(|i| {
+            let verifying_key = VerifyingKey::from_bytes(&pubkeys[i]).ok();
+            let sig = Signature::from_bytes(&signatures[i]);
+            if let Some(vk) = verifying_key {
+                vk.verify(&messages[i], &sig).is_ok()
+            } else {
+                false
+            }
+        })
+        .collect();
+    let cpu_time = cpu_start.elapsed();
+    println!("{:.2}s", cpu_time.as_secs_f64());
+
+    // GPU verification
+    print!("│ GPU verifying (CUDA)... ");
+    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+    let gpu_start = Instant::now();
+    let verifier = GpuEd25519Verifier::new(0).expect("Failed to init GPU");
+    let _gpu_results = verifier.batch_verify(&messages, &signatures, &pubkeys)
+        .expect("GPU verification failed");
+    let gpu_time = gpu_start.elapsed();
+    println!("{:.2}s", gpu_time.as_secs_f64());
+
+    let speedup = cpu_time.as_secs_f64() / gpu_time.as_secs_f64();
+
+    println!("├─────────────────────────────────────────────────────────────────┤");
+    println!("│ CPU Time:      {:>12.2}ms ({} cores)", cpu_time.as_millis(), num_cpus::get());
+    println!("│ GPU Time:      {:>12.2}ms (H100 NVL)", gpu_time.as_millis());
+    println!("│ Speedup:       {:>12.1}x ← GPU vs CPU", speedup);
+    println!("│");
+    println!("│ CPU Throughput: {:>10.2}K verifications/sec", batch_size as f64 / cpu_time.as_secs_f64() / 1_000.0);
+    println!("│ GPU Throughput: {:>10.2}K verifications/sec", batch_size as f64 / gpu_time.as_secs_f64() / 1_000.0);
+    println!("│");
+
+    let cpu_tps = batch_size as f64 / cpu_time.as_secs_f64();
+    let gpu_tps = batch_size as f64 / gpu_time.as_secs_f64();
+    println!("│ CPU Max TPS:   {:>10.2}K TPS (verify-bound)", cpu_tps / 1_000.0);
+    println!("│ GPU Max TPS:   {:>10.2}K TPS (verify-bound)", gpu_tps / 1_000.0);
     println!("└─────────────────────────────────────────────────────────────────┘");
 }
