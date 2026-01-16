@@ -145,6 +145,17 @@ impl Pubkey {
         arr.copy_from_slice(&bytes);
         Self(arr)
     }
+
+    /// Create a unique pubkey for testing (uses incrementing counter)
+    #[cfg(test)]
+    pub fn new_unique() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(1);
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut bytes = [0u8; 32];
+        bytes[..8].copy_from_slice(&count.to_le_bytes());
+        Self(bytes)
+    }
 }
 
 impl fmt::Debug for Pubkey {

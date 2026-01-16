@@ -5,15 +5,18 @@
 //! - BPF Loader: Program deployment and execution
 //! - Stake Program: Validator staking and delegation
 //! - Vote Program: Validator voting for consensus
+//! - Token Program: SPL Token operations
 
 pub mod bpf_loader;
 pub mod stake;
 pub mod system;
+pub mod token;
 pub mod vote;
 
 pub use bpf_loader::*;
 pub use stake::*;
 pub use system::*;
+pub use token::*;
 pub use vote::*;
 
 use crate::types::Pubkey;
@@ -26,6 +29,7 @@ pub fn is_native_program(pubkey: &Pubkey) -> bool {
         || *pubkey == Pubkey::bpf_loader_upgradeable()
         || *pubkey == Pubkey::stake_program()
         || *pubkey == Pubkey::vote_program()
+        || *pubkey == TokenProgram::program_id()
 }
 
 /// Native program IDs with their processors
@@ -34,6 +38,7 @@ pub struct NativePrograms {
     pub bpf_loader: BpfLoaderProgram,
     pub stake: StakeProgram,
     pub vote: VoteProgram,
+    pub token: TokenProgram,
 }
 
 impl Default for NativePrograms {
@@ -49,6 +54,7 @@ impl NativePrograms {
             bpf_loader: BpfLoaderProgram::new(),
             stake: StakeProgram::new(),
             vote: VoteProgram::new(),
+            token: TokenProgram::new(),
         }
     }
 }

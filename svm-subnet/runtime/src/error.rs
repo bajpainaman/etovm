@@ -82,6 +82,52 @@ pub enum RuntimeError {
 
     #[error("Mempool error: {0}")]
     Mempool(String),
+
+    // Native program errors
+    #[error("Not enough accounts provided")]
+    NotEnoughAccounts,
+
+    #[error("Account already initialized")]
+    AccountAlreadyInitialized,
+
+    #[error("Uninitialized account")]
+    UninitializedAccount,
+
+    #[error("Invalid mint")]
+    InvalidMint,
+
+    #[error("Account is frozen")]
+    AccountFrozen,
+
+    #[error("Invalid signer")]
+    InvalidSigner,
+
+    #[error("Insufficient funds")]
+    InsufficientFunds,
+
+    #[error("Arithmetic overflow")]
+    Overflow,
+
+    #[error("Invalid authority")]
+    InvalidAuthority,
+
+    #[error("Account has non-zero balance")]
+    NonZeroBalance,
+
+    #[error("Decimals mismatch")]
+    DecimalsMismatch,
+
+    #[error("Invalid multisig configuration")]
+    InvalidMultisigConfig,
+
+    #[error("Invalid stake state")]
+    InvalidStakeState,
+
+    #[error("Invalid vote state")]
+    InvalidVoteState,
+
+    #[error("Invalid account data")]
+    InvalidAccountData,
 }
 
 pub type RuntimeResult<T> = Result<T, RuntimeError>;
