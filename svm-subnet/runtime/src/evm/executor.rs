@@ -1,5 +1,6 @@
 use crate::{RuntimeError, RuntimeResult};
 use super::{EvmAddress, EvmExecutionResult, EvmLog, EvmStateAdapter};
+use super::precompiles::{PrecompileRegistry, PrecompileResult};
 
 use revm::{
     Evm,
@@ -9,7 +10,7 @@ use revm::{
     },
 };
 
-/// EVM executor using revm
+/// EVM executor using revm with SVM precompile support
 pub struct EvmExecutor {
     /// Chain ID
     chain_id: u64,
@@ -19,6 +20,8 @@ pub struct EvmExecutor {
     timestamp: u64,
     /// Gas limit
     gas_limit: u64,
+    /// Precompile registry for SVM interop
+    precompiles: PrecompileRegistry,
 }
 
 impl EvmExecutor {
@@ -28,7 +31,41 @@ impl EvmExecutor {
             block_number: 0,
             timestamp: 0,
             gas_limit: 30_000_000, // 30M gas limit
+            precompiles: PrecompileRegistry::new(),
         }
+    }
+
+    /// Check if address is a precompile
+    fn is_precompile(&self, addr: &EvmAddress) -> bool {
+        self.precompiles.is_precompile(addr)
+    }
+
+    /// Execute a precompile call - routes to SVM via the precompile registry
+    fn execute_precompile(
+        &self,
+        state: &mut EvmStateAdapter,
+        caller: EvmAddress,
+        target: &EvmAddress,
+        data: &[u8],
+        value: u128,
+        gas_limit: u64,
+    ) -> RuntimeResult<EvmExecutionResult> {
+        // Execute precompile with SVM state access
+        let result = self.precompiles.execute(
+            target,
+            caller,
+            value,
+            data,
+            state.accounts_mut(),
+        )?;
+
+        // PrecompileResult is a struct with success/output/gas_used
+        Ok(EvmExecutionResult {
+            success: result.success,
+            output: result.output,
+            gas_used: result.gas_used,
+            logs: vec![],
+        })
     }
 
     /// Set block context
@@ -47,6 +84,13 @@ impl EvmExecutor {
         data: Vec<u8>,
         gas_limit: u64,
     ) -> RuntimeResult<EvmExecutionResult> {
+        // Check if this is a precompile call - intercept before revm
+        if let Some(ref target) = to {
+            if self.is_precompile(target) {
+                return self.execute_precompile(state, caller, target, &data, value, gas_limit);
+            }
+        }
+
         // Build transaction environment
         let mut tx_env = TxEnv::default();
         tx_env.caller = Address::from_slice(&caller);
@@ -163,6 +207,17 @@ impl Default for EvmExecutor {
     }
 }
 
+/// Get access to the precompile registry for testing or configuration
+impl EvmExecutor {
+    pub fn precompiles(&self) -> &PrecompileRegistry {
+        &self.precompiles
+    }
+
+    pub fn precompiles_mut(&mut self) -> &mut PrecompileRegistry {
+        &mut self.precompiles
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +241,118 @@ mod tests {
         let result = executor.execute(&mut state, caller, Some(to), 0, vec![], 21000);
         // Result depends on state setup - this tests the API works
         assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_precompile_interception() {
+        use crate::evm::precompiles::addresses::SPL_TOKEN;
+        use crate::evm::precompiles::erc20_selectors;
+
+        let mut state = EvmStateAdapter::new();
+        let executor = EvmExecutor::new(1);
+
+        // Calling SPL_TOKEN precompile address should be intercepted
+        assert!(executor.is_precompile(&SPL_TOKEN));
+
+        // Call name() function on token precompile
+        let mut calldata = erc20_selectors::NAME.to_vec();
+        let caller = [1u8; 20];
+
+        let result = executor.execute(
+            &mut state,
+            caller,
+            Some(SPL_TOKEN),
+            0,
+            calldata,
+            100_000,
+        );
+
+        // Should succeed and return ABI-encoded name
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert!(res.success);
+        // Output should be ABI-encoded string
+        assert!(res.output.len() >= 64);
+    }
+
+    #[test]
+    fn test_precompile_decimals() {
+        use crate::evm::precompiles::addresses::SPL_TOKEN;
+        use crate::evm::precompiles::erc20_selectors;
+        use crate::evm::precompiles::TokenMetadata;
+        use crate::types::Pubkey;
+        use crate::programs::token::Mint;
+        use borsh::BorshSerialize;
+
+        let mut state = EvmStateAdapter::new();
+        let mut executor = EvmExecutor::new(1);
+
+        // Set up a default mint with 9 decimals
+        let mint_pubkey = Pubkey::new([42u8; 32]);
+        let mint = Mint {
+            mint_authority: None,
+            supply: 1_000_000_000,
+            decimals: 9,
+            is_initialized: true,
+            freeze_authority: None,
+        };
+
+        let mut mint_data = vec![];
+        mint.serialize(&mut mint_data).unwrap();
+
+        let mint_account = crate::types::Account {
+            lamports: 1_000_000,
+            data: mint_data,
+            owner: Pubkey::new([0u8; 32]),
+            executable: false,
+            rent_epoch: 0,
+        };
+
+        // Load mint account
+        state.load_accounts(vec![(mint_pubkey, mint_account)]);
+
+        // Set default mint for precompile
+        executor.precompiles_mut().set_default_mint(
+            mint_pubkey,
+            TokenMetadata {
+                name: "Test Token".to_string(),
+                symbol: "TEST".to_string(),
+                decimals: 9,
+            },
+        );
+
+        // Call decimals() on token precompile
+        let calldata = erc20_selectors::DECIMALS.to_vec();
+        let caller = [1u8; 20];
+
+        let result = executor.execute(
+            &mut state,
+            caller,
+            Some(SPL_TOKEN),
+            0,
+            calldata,
+            100_000,
+        );
+
+        assert!(result.is_ok());
+        let res = result.unwrap();
+        assert!(res.success);
+
+        // Output should be ABI-encoded uint8 (9)
+        assert_eq!(res.output.len(), 32);
+        assert_eq!(res.output[31], 9);
+    }
+
+    #[test]
+    fn test_non_precompile_passes_through() {
+        let mut state = EvmStateAdapter::new();
+        let executor = EvmExecutor::new(1);
+
+        // Regular address should not be intercepted as precompile
+        let regular_addr = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                           0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0,
+                           0x12, 0x34, 0x56, 0x78];
+
+        assert!(!executor.is_precompile(&regular_addr));
     }
 }

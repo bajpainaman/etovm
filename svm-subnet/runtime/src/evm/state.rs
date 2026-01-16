@@ -1,5 +1,5 @@
-use crate::{Account, Pubkey, RuntimeResult};
-use super::{EvmAddress, evm_address_to_pubkey, pubkey_to_evm_address};
+use crate::{Account, Pubkey};
+use super::{evm_address_to_pubkey, pubkey_to_evm_address};
 use std::collections::HashMap;
 
 use revm::primitives::{
@@ -17,8 +17,8 @@ pub struct EvmStateAdapter {
     code: HashMap<Address, Bytecode>,
     /// Block hashes
     block_hashes: HashMap<u64, B256>,
-    /// SVM account getter function
-    svm_accounts: HashMap<[u8; 32], Account>,
+    /// SVM accounts (keyed by Pubkey for compatibility with token program)
+    svm_accounts: HashMap<Pubkey, Account>,
 }
 
 impl EvmStateAdapter {
@@ -33,10 +33,10 @@ impl EvmStateAdapter {
     }
 
     /// Load SVM accounts into the adapter
-    pub fn load_accounts(&mut self, accounts: Vec<([u8; 32], Account)>) {
+    pub fn load_accounts(&mut self, accounts: Vec<(Pubkey, Account)>) {
         for (pubkey, account) in accounts {
             // Also create EVM view if this is an EVM-mapped account
-            let evm_addr = pubkey_to_evm_address(&pubkey);
+            let evm_addr = pubkey_to_evm_address(pubkey.as_ref());
             let address = Address::from_slice(&evm_addr);
 
             // Convert lamports to wei (1 lamport = 1 gwei = 1e9 wei)
@@ -62,7 +62,7 @@ impl EvmStateAdapter {
     }
 
     /// Get modified SVM accounts after EVM execution
-    pub fn get_modified_accounts(&self) -> Vec<([u8; 32], Account)> {
+    pub fn get_modified_accounts(&self) -> Vec<(Pubkey, Account)> {
         self.svm_accounts
             .iter()
             .map(|(k, v)| (*k, v.clone()))
@@ -72,7 +72,8 @@ impl EvmStateAdapter {
     /// Apply EVM state changes back to SVM accounts
     pub fn apply_changes(&mut self, address: Address, info: AccountInfo) {
         let evm_addr: [u8; 20] = address.as_slice().try_into().unwrap();
-        let pubkey = evm_address_to_pubkey(&evm_addr);
+        let pubkey_bytes = evm_address_to_pubkey(&evm_addr);
+        let pubkey = Pubkey::new(pubkey_bytes);
 
         // Convert balance back to lamports
         let lamports = (info.balance / U256::from(1_000_000_000u64)).as_limbs()[0];
@@ -100,6 +101,16 @@ impl EvmStateAdapter {
     /// Store EVM storage
     pub fn store_storage(&mut self, address: Address, slot: U256, value: U256) {
         self.storage.insert((address, slot), value);
+    }
+
+    /// Get mutable access to SVM accounts (for precompile execution)
+    pub fn accounts_mut(&mut self) -> &mut HashMap<Pubkey, Account> {
+        &mut self.svm_accounts
+    }
+
+    /// Get read access to SVM accounts
+    pub fn accounts(&self) -> &HashMap<Pubkey, Account> {
+        &self.svm_accounts
     }
 }
 

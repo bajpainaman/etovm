@@ -1,10 +1,12 @@
 mod executor;
 mod bridge;
 mod state;
+pub mod precompiles;
 
 pub use executor::EvmExecutor;
 pub use bridge::{EvmBridge, AddressMapper};
 pub use state::EvmStateAdapter;
+pub use precompiles::{PrecompileRegistry, PrecompileResult, TokenMetadata};
 
 use crate::{RuntimeError, RuntimeResult};
 

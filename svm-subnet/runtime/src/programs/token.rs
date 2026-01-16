@@ -403,7 +403,7 @@ impl TokenProgram {
         Ok(())
     }
 
-    fn process_transfer(
+    pub fn process_transfer(
         &self,
         accounts: &mut [(Pubkey, Account)],
         amount: u64,
@@ -471,7 +471,7 @@ impl TokenProgram {
         Ok(())
     }
 
-    fn process_approve(
+    pub fn process_approve(
         &self,
         accounts: &mut [(Pubkey, Account)],
         amount: u64,
@@ -604,7 +604,7 @@ impl TokenProgram {
         Ok(())
     }
 
-    fn process_mint_to(
+    pub fn process_mint_to(
         &self,
         accounts: &mut [(Pubkey, Account)],
         amount: u64,
@@ -646,7 +646,7 @@ impl TokenProgram {
         Ok(())
     }
 
-    fn process_burn(
+    pub fn process_burn(
         &self,
         accounts: &mut [(Pubkey, Account)],
         amount: u64,

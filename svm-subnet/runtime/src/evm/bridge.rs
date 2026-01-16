@@ -77,11 +77,7 @@ impl EvmBridge {
 
     /// Load SVM accounts into EVM state
     pub fn load_accounts(&mut self, accounts: Vec<(Pubkey, Account)>) {
-        let converted: Vec<([u8; 32], Account)> = accounts
-            .into_iter()
-            .map(|(pk, acc)| (pk.0, acc))
-            .collect();
-        self.state.load_accounts(converted);
+        self.state.load_accounts(accounts);
     }
 
     /// Call EVM contract from SVM
@@ -152,9 +148,6 @@ impl EvmBridge {
     /// Get modified accounts after EVM execution (for state sync)
     pub fn get_modified_accounts(&self) -> Vec<(Pubkey, Account)> {
         self.state.get_modified_accounts()
-            .into_iter()
-            .map(|(pk, acc)| (Pubkey(pk), acc))
-            .collect()
     }
 
     /// Encode a Solidity function call
