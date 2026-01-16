@@ -2,12 +2,12 @@
 
 ## Executive Summary
 
-ETO-VM is a **Solana Virtual Machine (SVM) runtime** designed to run as an **Avalanche L1 subnet**. It combines Solana's parallel execution model with Avalanche's sub-second finality, achieving **1.18M TPS** on synthetic benchmarks with **6.37M signature verifications/second** via GPU acceleration.
+ETO-VM is a **Solana Virtual Machine (SVM) runtime** designed to run as an **Avalanche L1 subnet**. It combines Solana's parallel execution model with Avalanche's sub-second finality, achieving **1.14M TPS** on synthetic benchmarks with **6.37M signature verifications/second** via GPU acceleration.
 
 ### Key Metrics
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Peak TPS | 1,180,000 | Synthetic benchmark, parallel transfers |
+| Peak TPS | 1,140,000 | Synthetic benchmark, parallel transfers |
 | GPU Sig Verify | 6,370,000/sec | CUDA Ed25519 batch verification |
 | Finality | ~430ms | Avalanche consensus |
 | Signature Bottleneck | 4% | Down from 86.9% pre-GPU |
@@ -688,7 +688,7 @@ avalanche blockchain deploy svm --fuji
 | Execution | SVM (parallel) | SVM | EVM (serial) | Move |
 | Consensus | Avalanche | Tower BFT | Rollup to L1 | Various |
 | Finality | ~430ms | ~400ms | Minutes-hours | Varies |
-| TPS (theoretical) | 1M+ | 65K | 2-4K | 100K+ |
+| TPS (theoretical) | 1.1M+ | 65K | 2-4K | 100K+ |
 | State DB | QMDB | AccountsDB | MPT | JMT |
 | Sig Verify | GPU | CPU | CPU | CPU |
 | EVM Compat | Precompiles | None | Native | None |
