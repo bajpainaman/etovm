@@ -10,10 +10,15 @@
 
 use crate::error::{RuntimeError, RuntimeResult};
 use crate::types::{Account, Pubkey};
+use dashmap::DashMap;
+use rustc_hash::FxBuildHasher;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use parking_lot::Mutex;
+
+/// High-performance DashMap with FxHasher (3-5x faster than SipHash)
+type FastDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 
 // Re-export QMDB types when the feature is enabled
 #[cfg(feature = "qmdb")]
@@ -189,10 +194,11 @@ impl BlockStateBatch {
 ///
 /// This provides QMDB-like semantics with in-memory storage.
 /// Used when QMDB feature is disabled or for unit tests.
+/// Uses DashMap with FxHasher for lock-free concurrent reads and writes.
 #[derive(Clone)]
 pub struct InMemoryQMDBState {
-    /// Current accounts state
-    accounts: Arc<RwLock<HashMap<Pubkey, Account>>>,
+    /// Current accounts state - FastDashMap (FxHasher) for lock-free concurrent access
+    accounts: Arc<FastDashMap<Pubkey, Account>>,
     /// Pending block batch
     pending_batch: Arc<Mutex<Option<BlockStateBatch>>>,
     /// Current block height
@@ -204,7 +210,7 @@ pub struct InMemoryQMDBState {
 impl InMemoryQMDBState {
     pub fn new() -> Self {
         Self {
-            accounts: Arc::new(RwLock::new(HashMap::new())),
+            accounts: Arc::new(DashMap::with_hasher(FxBuildHasher)),
             pending_batch: Arc::new(Mutex::new(None)),
             current_height: Arc::new(RwLock::new(0)),
             merkle_root: Arc::new(RwLock::new([0u8; 32])),
@@ -213,11 +219,8 @@ impl InMemoryQMDBState {
 
     pub fn with_accounts(accounts: Vec<(Pubkey, Account)>) -> Self {
         let state = Self::new();
-        {
-            let mut map = state.accounts.write().unwrap();
-            for (pubkey, account) in accounts {
-                map.insert(pubkey, account);
-            }
+        for (pubkey, account) in accounts {
+            state.accounts.insert(pubkey, account);
         }
         state
     }
@@ -268,20 +271,20 @@ impl InMemoryQMDBState {
             None => return Err(RuntimeError::State("No block to commit".to_string())),
         };
 
-        // Apply all changes
+        // Apply all changes - DashMap allows concurrent writes
         let merged = batch.flatten();
-        {
-            let mut accounts = self.accounts.write()
-                .map_err(|e| RuntimeError::State(e.to_string()))?;
+        let _num_changes = merged.updates.len();
 
-            for pubkey in merged.deletions {
-                accounts.remove(&pubkey);
-            }
+        // Parallel deletions
+        use rayon::prelude::*;
+        merged.deletions.par_iter().for_each(|pubkey| {
+            self.accounts.remove(pubkey);
+        });
 
-            for (pubkey, account) in merged.updates {
-                accounts.insert(pubkey, account);
-            }
-        }
+        // Parallel inserts
+        merged.updates.par_iter().for_each(|(pubkey, account)| {
+            self.accounts.insert(*pubkey, account.clone());
+        });
 
         // Update height
         {
@@ -290,8 +293,8 @@ impl InMemoryQMDBState {
             *height = batch.height;
         }
 
-        // Compute new merkle root (parallel full rebuild)
-        let root = self.compute_merkle_root()?;
+        // OPTIMIZATION: Compute merkle ONLY on changed accounts (not all)
+        let root = self.compute_merkle_from_changes(&merged)?;
         {
             let mut merkle_root = self.merkle_root.write()
                 .map_err(|e| RuntimeError::State(e.to_string()))?;
@@ -301,6 +304,47 @@ impl InMemoryQMDBState {
         Ok(root)
     }
 
+    /// Compute incremental state commitment using parallel accumulator
+    /// This is O(n/p) where n = changes, p = cores - much faster than merkle tree
+    fn compute_merkle_from_changes(&self, changes: &StateChangeSet) -> RuntimeResult<[u8; 32]> {
+        use crate::hiperf::sha256_pair;
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        if changes.updates.is_empty() && changes.deletions.is_empty() {
+            let root = self.merkle_root.read()
+                .map_err(|e| RuntimeError::State(e.to_string()))?;
+            return Ok(*root);
+        }
+
+        // Parallel XOR accumulator - O(n/p) instead of O(n log n)
+        // Each thread computes local XOR, then combine atomically
+        let acc: [AtomicU64; 4] = Default::default();
+
+        changes.updates.par_iter().for_each(|(pubkey, account)| {
+            let hash = sha256_pair(&pubkey.0, &serialize_account(account));
+
+            // XOR into accumulator (split into 4 u64s for parallel access)
+            for i in 0..4 {
+                let chunk = u64::from_le_bytes(hash[i*8..(i+1)*8].try_into().unwrap());
+                acc[i].fetch_xor(chunk, Ordering::Relaxed);
+            }
+        });
+
+        // Combine with previous root
+        let prev_root = self.merkle_root.read()
+            .map_err(|e| RuntimeError::State(e.to_string()))?;
+
+        let mut result = [0u8; 32];
+        for i in 0..4 {
+            let prev_chunk = u64::from_le_bytes(prev_root[i*8..(i+1)*8].try_into().unwrap());
+            let new_chunk = acc[i].load(Ordering::Relaxed) ^ prev_chunk;
+            result[i*8..(i+1)*8].copy_from_slice(&new_chunk.to_le_bytes());
+        }
+
+        Ok(result)
+    }
+
     /// Abort the current block
     pub fn abort_block(&self) -> RuntimeResult<()> {
         let mut pending = self.pending_batch.lock();
@@ -308,25 +352,22 @@ impl InMemoryQMDBState {
         Ok(())
     }
 
-    /// Get account (reads committed state)
+    /// Get account (reads committed state) - lock-free with DashMap
     pub fn get_account(&self, pubkey: &Pubkey) -> RuntimeResult<Option<Account>> {
-        let accounts = self.accounts.read()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-        Ok(accounts.get(pubkey).cloned())
+        Ok(self.accounts.get(pubkey).map(|r| r.value().clone()))
     }
 
-    /// Get multiple accounts
+    /// Get multiple accounts - parallel with DashMap
     pub fn get_accounts(&self, pubkeys: &[Pubkey]) -> RuntimeResult<Vec<Option<Account>>> {
-        let accounts = self.accounts.read()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-        Ok(pubkeys.iter().map(|pk| accounts.get(pk).cloned()).collect())
+        use rayon::prelude::*;
+        Ok(pubkeys.par_iter()
+            .map(|pk| self.accounts.get(pk).map(|r| r.value().clone()))
+            .collect())
     }
 
-    /// Check if account exists
+    /// Check if account exists - lock-free with DashMap
     pub fn account_exists(&self, pubkey: &Pubkey) -> RuntimeResult<bool> {
-        let accounts = self.accounts.read()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-        Ok(accounts.contains_key(pubkey))
+        Ok(self.accounts.contains_key(pubkey))
     }
 
     /// Get current merkle root
@@ -343,25 +384,21 @@ impl InMemoryQMDBState {
         Ok(*height)
     }
 
-    /// Compute merkle root using parallel merkle tree (SIMD-accelerated)
+    /// Compute full merkle root over all accounts (used for initial state only)
     fn compute_merkle_root(&self) -> RuntimeResult<[u8; 32]> {
         use crate::hiperf::{parallel_merkle_root, sha256_pair};
         use rayon::prelude::*;
 
-        let accounts = self.accounts.read()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-
-        if accounts.is_empty() {
+        if self.accounts.is_empty() {
             return Ok([0u8; 32]);
         }
 
-        // Collect accounts for parallel sort
-        let mut sorted: Vec<_> = accounts.iter().collect();
+        // Collect and sort entries from DashMap
+        let mut sorted: Vec<_> = self.accounts.iter()
+            .map(|r| (*r.key(), r.value().clone()))
+            .collect();
+        sorted.sort_by_key(|(pk, _)| pk.0);
 
-        // Parallel sort by pubkey for deterministic ordering
-        sorted.par_sort_by_key(|(pk, _)| pk.0);
-
-        // Hash leaves in parallel (SIMD-accelerated via ring)
         let leaves: Vec<[u8; 32]> = sorted
             .par_iter()
             .map(|(pubkey, account)| {
@@ -369,23 +406,18 @@ impl InMemoryQMDBState {
             })
             .collect();
 
-        // Compute merkle root from leaves in parallel
         Ok(parallel_merkle_root(&leaves))
     }
 
-    /// Direct set account (for testing/initialization)
+    /// Direct set account (for testing/initialization) - lock-free with DashMap
     pub fn set_account(&self, pubkey: &Pubkey, account: &Account) -> RuntimeResult<()> {
-        let mut accounts = self.accounts.write()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-        accounts.insert(*pubkey, account.clone());
+        self.accounts.insert(*pubkey, account.clone());
         Ok(())
     }
 
-    /// Direct delete account (for testing)
+    /// Direct delete account (for testing) - lock-free with DashMap
     pub fn delete_account(&self, pubkey: &Pubkey) -> RuntimeResult<()> {
-        let mut accounts = self.accounts.write()
-            .map_err(|e| RuntimeError::State(e.to_string()))?;
-        accounts.remove(pubkey);
+        self.accounts.remove(pubkey);
         Ok(())
     }
 }

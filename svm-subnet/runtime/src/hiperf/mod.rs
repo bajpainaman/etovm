@@ -42,7 +42,9 @@ mod batch_verifier;
 mod cuda_executor;
 #[cfg(feature = "cuda")]
 mod cuda_ed25519;
+mod fafo_scheduler;
 mod fast_scheduler;
+mod streaming_scheduler;
 mod gpu_verifier;
 mod incremental_merkle;
 mod memory_pool;
@@ -58,7 +60,9 @@ pub use batch_verifier::*;
 pub use cuda_executor::*;
 #[cfg(feature = "cuda")]
 pub use cuda_ed25519::*;
+pub use fafo_scheduler::*;
 pub use fast_scheduler::*;
+pub use streaming_scheduler::*;
 pub use gpu_verifier::*;
 pub use incremental_merkle::*;
 pub use memory_pool::*;

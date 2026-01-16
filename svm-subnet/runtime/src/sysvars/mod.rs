@@ -16,25 +16,21 @@ pub mod ids {
     use lazy_static::lazy_static;
 
     lazy_static! {
-        pub static ref CLOCK: Pubkey = pubkey_from_str("SysvarC1ock11111111111111111111111111111111");
-        pub static ref RENT: Pubkey = pubkey_from_str("SysvarRent111111111111111111111111111111111");
-        pub static ref EPOCH_SCHEDULE: Pubkey =
-            pubkey_from_str("SysvarEpochScheworLd1111111111111111111111111");
-        pub static ref FEES: Pubkey = pubkey_from_str("SysvarFees111111111111111111111111111111111");
-        pub static ref RECENT_BLOCKHASHES: Pubkey =
-            pubkey_from_str("SysvarRecentB1ockHashes11111111111111111111");
-        pub static ref STAKE_HISTORY: Pubkey =
-            pubkey_from_str("SysvarStakeHistory1111111111111111111111111");
-        pub static ref INSTRUCTIONS: Pubkey =
-            pubkey_from_str("Sysvar1nstructions1111111111111111111111111");
-        pub static ref SLOT_HASHES: Pubkey =
-            pubkey_from_str("SysvarS1otHashes111111111111111111111111111");
+        pub static ref CLOCK: Pubkey = Pubkey::sysvar_clock();
+        pub static ref RENT: Pubkey = Pubkey::sysvar_rent();
+        pub static ref EPOCH_SCHEDULE: Pubkey = Pubkey::sysvar_epoch_schedule();
+        pub static ref FEES: Pubkey = pubkey_from_hash(b"sysvar:fees");
+        pub static ref RECENT_BLOCKHASHES: Pubkey = Pubkey::sysvar_recent_blockhashes();
+        pub static ref STAKE_HISTORY: Pubkey = Pubkey::sysvar_stake_history();
+        pub static ref INSTRUCTIONS: Pubkey = pubkey_from_hash(b"sysvar:instructions");
+        pub static ref SLOT_HASHES: Pubkey = Pubkey::sysvar_slot_hashes();
     }
 
-    fn pubkey_from_str(s: &str) -> Pubkey {
-        let bytes = bs58::decode(s).into_vec().expect("Invalid base58");
+    fn pubkey_from_hash(seed: &[u8]) -> Pubkey {
+        use sha2::{Sha256, Digest};
+        let hash = Sha256::digest(seed);
         let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
+        arr.copy_from_slice(&hash);
         Pubkey::from(arr)
     }
 }

@@ -3,8 +3,8 @@ pub mod error;
 pub mod accounts;
 pub mod qmdb_state;
 pub mod real_qmdb_state;
-pub mod sysvars;
 pub mod programs;
+pub mod sysvars;
 pub mod executor;
 pub mod runtime;
 pub mod bpf;
@@ -12,6 +12,7 @@ pub mod evm;
 pub mod hybrid;
 pub mod sealevel;
 pub mod hiperf;
+pub mod gpu;
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_uchar, c_ulong};

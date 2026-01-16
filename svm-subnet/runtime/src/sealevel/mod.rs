@@ -17,7 +17,11 @@ mod account_locks;
 mod qmdb_executor;
 pub mod benchmark;
 
-pub use access_set::{AccessSet, AccessType};
+pub use access_set::{
+    AccessSet, AccessType,
+    // High-performance bitset types
+    Bitset256, BitsetAccessSet, BitsetBatch, AccountIndexer,
+};
 pub use batch_scheduler::{BatchScheduler, TransactionBatch};
 pub use conflict_graph::ConflictGraph;
 pub use parallel_executor::{ParallelExecutor, ParallelExecutorConfig, BatchExecutionResult};

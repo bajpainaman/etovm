@@ -92,6 +92,53 @@ impl Pubkey {
         Self::from_base58("BPFLoaderUpgradeab1e11111111111111111111111")
     }
 
+    pub fn stake_program() -> Self {
+        // Stake11111111111111111111111111111111111111
+        Self::from_base58("Stake11111111111111111111111111111111111111")
+    }
+
+    pub fn vote_program() -> Self {
+        // Vote111111111111111111111111111111111111111
+        Self::from_base58("Vote111111111111111111111111111111111111111")
+    }
+
+    pub fn stake_config() -> Self {
+        // StakeConfig11111111111111111111111111111111
+        Self::from_base58("StakeConfig11111111111111111111111111111111")
+    }
+
+    // Sysvar addresses - deterministic pubkeys from seed hashes
+    pub fn sysvar_clock() -> Self {
+        Self::from_seed(b"sysvar:clock")
+    }
+
+    pub fn sysvar_rent() -> Self {
+        Self::from_seed(b"sysvar:rent")
+    }
+
+    pub fn sysvar_epoch_schedule() -> Self {
+        Self::from_seed(b"sysvar:epoch_schedule")
+    }
+
+    pub fn sysvar_slot_hashes() -> Self {
+        Self::from_seed(b"sysvar:slot_hashes")
+    }
+
+    pub fn sysvar_recent_blockhashes() -> Self {
+        Self::from_seed(b"sysvar:recent_blockhashes")
+    }
+
+    pub fn sysvar_stake_history() -> Self {
+        Self::from_seed(b"sysvar:stake_history")
+    }
+
+    fn from_seed(seed: &[u8]) -> Self {
+        let hash = Sha256::digest(seed);
+        let mut arr = [0u8; 32];
+        arr.copy_from_slice(&hash);
+        Self(arr)
+    }
+
     fn from_base58(s: &str) -> Self {
         let bytes = bs58::decode(s).into_vec().expect("Invalid base58");
         let mut arr = [0u8; 32];

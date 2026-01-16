@@ -56,6 +56,7 @@ ed25519-dalek = { version = "2.1", features = ["rand_core", "batch", "digest"] }
 sha2 = { version = "0.10", features = ["asm"] }  # SIMD/ASM acceleration
 sha3 = "0.10"
 rand = "0.8"
+rand_chacha = "0.3"
 curve25519-dalek = { version = "4.1", features = ["alloc"] }
 
 # High-performance hashing (SHA-NI, AVX2, NEON auto-detected)
@@ -75,6 +76,7 @@ tokio = { version = "1.35", features = ["rt-multi-thread", "sync", "time", "macr
 arrayvec = "0.7"
 smallvec = { version = "1.13", features = ["union", "const_generics"] }
 bumpalo = { version = "3.14", features = ["collections"] }
+rustc-hash = "2.0"  # FxHashMap - 3-5x faster than std HashMap
 
 # Utilities
 parking_lot = "0.12"
