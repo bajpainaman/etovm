@@ -6,13 +6,16 @@
 //! - Stake Program: Validator staking and delegation
 //! - Vote Program: Validator voting for consensus
 //! - Token Program: SPL Token operations
+//! - Associated Token Account: Deterministic token account addresses
 
+pub mod associated_token;
 pub mod bpf_loader;
 pub mod stake;
 pub mod system;
 pub mod token;
 pub mod vote;
 
+pub use associated_token::*;
 pub use bpf_loader::*;
 pub use stake::*;
 pub use system::*;
@@ -30,6 +33,7 @@ pub fn is_native_program(pubkey: &Pubkey) -> bool {
         || *pubkey == Pubkey::stake_program()
         || *pubkey == Pubkey::vote_program()
         || *pubkey == TokenProgram::program_id()
+        || *pubkey == AtaProgram::program_id()
 }
 
 /// Native program IDs with their processors
@@ -39,6 +43,7 @@ pub struct NativePrograms {
     pub stake: StakeProgram,
     pub vote: VoteProgram,
     pub token: TokenProgram,
+    pub ata: AtaProgram,
 }
 
 impl Default for NativePrograms {
@@ -55,6 +60,7 @@ impl NativePrograms {
             stake: StakeProgram::new(),
             vote: VoteProgram::new(),
             token: TokenProgram::new(),
+            ata: AtaProgram::new(),
         }
     }
 }
