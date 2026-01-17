@@ -123,6 +123,8 @@ func DefaultAccounts() []vm.GenesisAccount {
 	}{
 		// Faucet account with lots of funds
 		{"Faucet11111111111111111111111111111111111111", 1_000_000_000_000_000}, // 1M SOL equivalent
+		// Stress test wallet (private key: fff90a45e092f38919eda5a69fb73b072fb208161021618cdf83918cf512910d)
+		{"6ZrQwARijYWKZZAXe88D97mQqSqqiuBd2n59KmQRvik6", 100_000_000_000_000}, // 100K SOL
 		// Test accounts
 		{"Test1111111111111111111111111111111111111111", 100_000_000_000}, // 100 SOL
 		{"Test2222222222222222222222222222222222222222", 100_000_000_000}, // 100 SOL

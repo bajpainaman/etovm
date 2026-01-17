@@ -158,6 +158,69 @@ impl StateChangeSet {
     }
 }
 
+/// Delta-based account change - avoids full Account clone for simple operations
+#[derive(Clone, Debug)]
+pub enum AccountDelta {
+    /// Only lamports changed - no clone needed
+    LamportsChange { pubkey: Pubkey, old_lamports: u64, new_lamports: u64 },
+    /// Full account change (data modified, created, etc.)
+    Full { pubkey: Pubkey, account: Account },
+    /// Account deleted
+    Delete { pubkey: Pubkey },
+}
+
+/// Fast change set using deltas - optimized for transfers
+#[derive(Clone, Debug, Default)]
+pub struct FastChangeSet {
+    pub deltas: Vec<AccountDelta>,
+}
+
+impl FastChangeSet {
+    pub fn new() -> Self {
+        Self { deltas: Vec::with_capacity(4) }
+    }
+
+    /// Record a lamports-only change (no clone!)
+    #[inline]
+    pub fn record_lamports(&mut self, pubkey: Pubkey, old: u64, new: u64) {
+        self.deltas.push(AccountDelta::LamportsChange {
+            pubkey,
+            old_lamports: old,
+            new_lamports: new,
+        });
+    }
+
+    /// Record a full account change (clone required)
+    #[inline]
+    pub fn record_full(&mut self, pubkey: Pubkey, account: Account) {
+        self.deltas.push(AccountDelta::Full { pubkey, account });
+    }
+
+    /// Convert to StateChangeSet for compatibility
+    pub fn to_changeset(&self, state: &InMemoryQMDBState) -> StateChangeSet {
+        let mut cs = StateChangeSet::new();
+        for delta in &self.deltas {
+            match delta {
+                AccountDelta::LamportsChange { pubkey, new_lamports, .. } => {
+                    // Read existing account, update lamports only
+                    if let Ok(Some(account)) = state.get_account(pubkey) {
+                        let mut updated = account;
+                        updated.lamports = *new_lamports;
+                        cs.update(*pubkey, updated);
+                    }
+                }
+                AccountDelta::Full { pubkey, account } => {
+                    cs.update(*pubkey, account.clone());
+                }
+                AccountDelta::Delete { pubkey } => {
+                    cs.delete(*pubkey);
+                }
+            }
+        }
+        cs
+    }
+}
+
 /// Block-level state batch for QMDB
 ///
 /// Collects all state changes for a block before committing.
@@ -302,6 +365,73 @@ impl InMemoryQMDBState {
         }
 
         Ok(root)
+    }
+
+    /// Commit block for delta-mode (direct writes) - takes changed pubkeys for merkle
+    pub fn commit_block_direct(&self, height: u64, changed_pubkeys: &[Pubkey]) -> RuntimeResult<[u8; 32]> {
+        use crate::hiperf::sha256_pair;
+        use rayon::prelude::*;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        // Update height
+        {
+            let mut h = self.current_height.write()
+                .map_err(|e| RuntimeError::State(e.to_string()))?;
+            *h = height;
+        }
+
+        // Clear pending batch (if any)
+        {
+            let mut pending = self.pending_batch.lock();
+            *pending = None;
+        }
+
+        if changed_pubkeys.is_empty() {
+            return self.merkle_root();
+        }
+
+        // Chunked parallel XOR accumulator - avoids DashMap contention
+        let acc: [AtomicU64; 4] = Default::default();
+        const CHUNK_SIZE: usize = 10_000;
+
+        changed_pubkeys.par_chunks(CHUNK_SIZE).for_each(|chunk| {
+            // Local accumulator per chunk
+            let mut local_acc = [0u64; 4];
+
+            for pubkey in chunk {
+                if let Some(account) = self.accounts.get(pubkey) {
+                    let hash = sha256_pair(&pubkey.0, &serialize_account(account.value()));
+                    for i in 0..4 {
+                        let chunk_val = u64::from_le_bytes(hash[i*8..(i+1)*8].try_into().unwrap());
+                        local_acc[i] ^= chunk_val;
+                    }
+                }
+            }
+
+            // Merge local into global
+            for i in 0..4 {
+                acc[i].fetch_xor(local_acc[i], Ordering::Relaxed);
+            }
+        });
+
+        // Combine with previous root
+        let prev_root = self.merkle_root.read()
+            .map_err(|e| RuntimeError::State(e.to_string()))?;
+
+        let mut result = [0u8; 32];
+        for i in 0..4 {
+            let prev_chunk = u64::from_le_bytes(prev_root[i*8..(i+1)*8].try_into().unwrap());
+            let new_chunk = acc[i].load(Ordering::Relaxed) ^ prev_chunk;
+            result[i*8..(i+1)*8].copy_from_slice(&new_chunk.to_le_bytes());
+        }
+
+        {
+            let mut merkle_root = self.merkle_root.write()
+                .map_err(|e| RuntimeError::State(e.to_string()))?;
+            *merkle_root = result;
+        }
+
+        Ok(result)
     }
 
     /// Compute incremental state commitment using parallel accumulator

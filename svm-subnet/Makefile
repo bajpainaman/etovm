@@ -4,8 +4,8 @@ GOPATH ?= $(shell go env GOPATH)
 GOBIN ?= $(GOPATH)/bin
 BUILD_DIR = build
 
-# VM ID derived from "svm" name (use avalanche-cli to verify)
-VM_ID = srEXiWaHq7HVqKPT3HTPM8iSdLVatYC49pLVfxzdjwc9hLKm2
+# VM ID for Fuji testnet (derived from subnet creation)
+VM_ID = srLZEW2t7KxW8xzjgh6Nq3FX6aPVrJav283g5T5YU9NSp1xC1
 
 # AvalancheGo paths
 AVALANCHEGO_PATH ?= $(HOME)/.avalanchego
@@ -80,6 +80,17 @@ lint:
 # Development: clean, build, and install
 dev: clean build install genesis
 	@echo "Development build complete"
+
+# Run benchmarks
+bench: build-runtime
+	@echo "Running Turbo benchmark..."
+	cd runtime && RUSTFLAGS="-C target-cpu=native" cargo build --release --bin turbo_bench
+	./runtime/target/release/turbo_bench
+
+bench-qmdb: build-runtime
+	@echo "Running QMDB benchmark..."
+	cd runtime && RUSTFLAGS="-C target-cpu=native" cargo build --release --bin qmdb_bench
+	./runtime/target/release/qmdb_bench
 
 # Print VM information
 info:

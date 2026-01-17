@@ -1,0 +1,47 @@
+# Build outputs
+build/
+target/
+*.a
+*.so
+*.dylib
+
+# Go
+*.exe
+*.test
+*.out
+
+# Rust
+runtime/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local config (keep genesis.json in genesis/)
+/genesis.json
+
+# Test artifacts
+*.prof
+*.pprof
+coverage.out
+coverage.html
+
+# Avalanche
+.avalanchego/
+
+# Environment
+.env
+.env.local
+*.pem

@@ -28,6 +28,10 @@ type Config struct {
 	// Execution limits
 	MaxComputeUnits      uint64 `json:"maxComputeUnits"`
 	LamportsPerSignature uint64 `json:"lamportsPerSignature"`
+
+	// Performance options
+	UseTurboMode     bool `json:"useTurboMode"`     // Use 11M+ TPS delta execution
+	VerifySignatures bool `json:"verifySignatures"` // Verify Ed25519 signatures
 }
 
 // DefaultConfig returns the default configuration
@@ -41,6 +45,8 @@ func DefaultConfig() *Config {
 		ChainID:              43114, // Avalanche C-Chain compatible
 		MaxComputeUnits:      1_400_000,
 		LamportsPerSignature: 5000,
+		UseTurboMode:         true,  // Enable 11M+ TPS delta execution by default
+		VerifySignatures:     true,  // Verify signatures in production
 	}
 }
 

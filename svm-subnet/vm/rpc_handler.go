@@ -135,6 +135,8 @@ func (h *rpcHandler) dispatchSolana(ctx context.Context, method string, params j
 		return map[string]interface{}{"solana-core": "1.18.0", "feature-set": 0}, nil
 	case "getMinimumBalanceForRentExemption":
 		return h.getMinRentExemption(ctx, params)
+	case "requestAirdrop":
+		return h.requestAirdrop(ctx, params)
 	default:
 		return nil, &rpcError{Code: -32601, Message: fmt.Sprintf("Method not found: %s", method)}
 	}
@@ -302,6 +304,70 @@ func (h *rpcHandler) getMinRentExemption(ctx context.Context, params json.RawMes
 
 	// Rent exempt formula: (128 + dataLen) * 3480 * 2
 	return (128 + dataLen) * 3480 * 2, nil
+}
+
+// requestAirdrop funds an account with lamports (testnet faucet)
+func (h *rpcHandler) requestAirdrop(ctx context.Context, params json.RawMessage) (interface{}, error) {
+	var args []interface{}
+	if err := json.Unmarshal(params, &args); err != nil || len(args) < 2 {
+		return nil, &rpcError{Code: -32602, Message: "Invalid params: expected [pubkey, lamports]"}
+	}
+
+	pubkeyStr, _ := args[0].(string)
+	pubkeyBytes, err := base58.Decode(pubkeyStr)
+	if err != nil || len(pubkeyBytes) != 32 {
+		return nil, &rpcError{Code: -32602, Message: "Invalid pubkey"}
+	}
+
+	var pubkey [32]byte
+	copy(pubkey[:], pubkeyBytes)
+
+	// Get lamports amount
+	var lamports uint64
+	switch v := args[1].(type) {
+	case float64:
+		lamports = uint64(v)
+	case int64:
+		lamports = uint64(v)
+	case int:
+		lamports = uint64(v)
+	default:
+		return nil, &rpcError{Code: -32602, Message: "Invalid lamports amount"}
+	}
+
+	// Max airdrop: 1B lamports (1000 SOL) per request
+	if lamports > 1_000_000_000_000 {
+		lamports = 1_000_000_000_000
+	}
+
+	// Get or create account
+	account, err := h.vm.GetAccount(pubkey)
+	if err != nil {
+		// Create new account with System Program as owner
+		var owner [32]byte
+		systemProgramBytes, _ := base58.Decode("11111111111111111111111111111111")
+		copy(owner[:], systemProgramBytes)
+
+		account = &AccountState{
+			Lamports:   lamports,
+			Data:       nil,
+			Owner:      owner,
+			Executable: false,
+			RentEpoch:  0,
+		}
+	} else {
+		// Add to existing balance
+		account.Lamports += lamports
+	}
+
+	// Save account
+	if err := h.vm.SetAccount(pubkey, account); err != nil {
+		return nil, &rpcError{Code: -32603, Message: "Failed to fund account: " + err.Error()}
+	}
+
+	// Return a fake transaction signature (airdrop doesn't need real tx)
+	sig := sha256Hash(append(pubkey[:], byte(h.vm.GetSlot())))
+	return base58.Encode(sig[:]), nil
 }
 
 // ========== Ethereum RPC Methods ==========

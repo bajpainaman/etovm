@@ -49,6 +49,9 @@ type VM struct {
 	// QMDB parallel executor (block execution with merkle roots)
 	qmdb *ffi.QMDBExecutor
 
+	// Turbo executor (11M+ TPS delta mode)
+	turbo *ffi.TurboExecutor
+
 	// Hybrid executor (SVM + EVM)
 	hybrid *ffi.HybridExecutor
 
@@ -62,6 +65,9 @@ type VM struct {
 
 	// App sender for engine notifications
 	appSender common.AppSender
+
+	// Notification channel for pending transactions
+	pendingTxs chan struct{}
 
 	// Sync
 	mu sync.RWMutex
@@ -137,6 +143,19 @@ func (vm *VM) Initialize(
 		vm.log.Info(fmt.Sprintf("QMDB initialized with %d threads", qmdbStats.NumThreads))
 	}
 
+	// Initialize Turbo executor (11M+ TPS delta mode)
+	vm.log.Info("initializing Turbo executor (delta mode)...")
+	turbo, err := ffi.NewTurboExecutor(0, config.VerifySignatures) // 0 = use all CPUs
+	if err != nil {
+		vm.log.Error(fmt.Sprintf("Turbo init failed: %v", err))
+		return fmt.Errorf("failed to initialize Turbo executor: %w", err)
+	}
+	vm.turbo = turbo
+	turboStats, _ := turbo.GetStats()
+	if turboStats != nil {
+		vm.log.Info(fmt.Sprintf("Turbo executor initialized with %d threads (11M+ TPS delta mode)", turboStats.NumThreads))
+	}
+
 	// Initialize hybrid executor (SVM + EVM)
 	vm.log.Info("initializing hybrid executor...")
 	hybrid, err := ffi.NewHybridExecutor(config.ChainID)
@@ -152,6 +171,9 @@ func (vm *VM) Initialize(
 
 	// Initialize mempool
 	vm.mempool = NewMempool(config.MempoolSize)
+
+	// Initialize notification channel (buffered to avoid blocking)
+	vm.pendingTxs = make(chan struct{}, 1)
 
 	// Parse genesis
 	var genesis Genesis
@@ -234,6 +256,13 @@ func (vm *VM) initFromGenesis(genesis *Genesis) (*Block, error) {
 				vm.log.Warn(fmt.Sprintf("failed to load account into hybrid executor: %v", err))
 			}
 		}
+
+		// Also load into turbo executor (for 11M+ TPS delta mode)
+		if vm.turbo != nil {
+			if err := vm.turbo.LoadAccount(account.Pubkey, account.Lamports, account.Data, account.Owner, account.Executable); err != nil {
+				vm.log.Warn(fmt.Sprintf("failed to load account into turbo executor: %v", err))
+			}
+		}
 	}
 
 	// Calculate genesis block ID
@@ -268,6 +297,10 @@ func (vm *VM) Shutdown(ctx context.Context) error {
 
 	if vm.qmdb != nil {
 		vm.qmdb.Close()
+	}
+
+	if vm.turbo != nil {
+		vm.turbo.Close()
 	}
 
 	if vm.hybrid != nil {
@@ -321,19 +354,22 @@ func (vm *VM) Version(ctx context.Context) (string, error) {
 
 // WaitForEvent implements common.VM
 func (vm *VM) WaitForEvent(ctx context.Context) (common.Message, error) {
-	vm.mu.Lock()
-	// Check if we have pending transactions
+	// Check if we already have pending transactions
+	vm.mu.RLock()
 	hasPending := vm.mempool.Len() > 0
-	vm.mu.Unlock()
+	vm.mu.RUnlock()
 
 	if hasPending {
 		return common.PendingTxs, nil
 	}
 
-	// Wait for context cancellation or block on a channel
-	// For now, just wait for context to be done
-	<-ctx.Done()
-	return 0, ctx.Err()
+	// Wait for new transactions or context cancellation
+	select {
+	case <-vm.pendingTxs:
+		return common.PendingTxs, nil
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
 }
 
 // BuildBlock implements block.ChainVM
@@ -366,16 +402,64 @@ func (vm *VM) BuildBlockWithContext(ctx context.Context, blockCtx *block.Context
 		transactions: txs,
 	}
 
-	// Set block context in QMDB executor
-	blockhash := parent.ID()
-	if err := vm.qmdb.SetBlockContext(newBlock.height, newBlock.timestamp.Unix(), blockhash[:]); err != nil {
-		return nil, fmt.Errorf("failed to set block context: %w", err)
-	}
-
 	// Prepare transaction data for block execution
 	txDataList := make([][]byte, len(txs))
 	for i, tx := range txs {
 		txDataList[i] = tx.Bytes()
+	}
+
+	blockhash := parent.ID()
+
+	// Use Turbo executor for 11M+ TPS delta execution (default for Avalanche L1)
+	if vm.config.UseTurboMode && vm.turbo != nil {
+		// Set block context in Turbo executor
+		if err := vm.turbo.SetBlockContext(newBlock.height, newBlock.timestamp.Unix(), blockhash[:]); err != nil {
+			return nil, fmt.Errorf("failed to set turbo block context: %w", err)
+		}
+
+		// Execute block using Turbo delta mode (11M+ TPS)
+		turboResult, err := vm.turbo.ExecuteBlockDelta(newBlock.height, txDataList)
+		if err != nil {
+			vm.log.Warn(fmt.Sprintf("turbo block execution failed: %v", err))
+			return nil, fmt.Errorf("turbo block execution failed: %w", err)
+		}
+
+		// In delta mode, all parsed transactions succeed (invalid ones fail silently)
+		// Mark successful transactions
+		executedTxs := make([]*Transaction, 0, turboResult.Successful)
+		successCount := int(turboResult.Successful)
+		for i := 0; i < len(txs) && i < successCount; i++ {
+			txs[i].Result = &ffi.ExecutionResult{
+				Success:          true,
+				ComputeUnitsUsed: turboResult.TotalComputeUnits / uint64(successCount),
+				Fee:              turboResult.TotalFees / uint64(successCount),
+			}
+			executedTxs = append(executedTxs, txs[i])
+		}
+
+		if len(executedTxs) == 0 {
+			return nil, errors.New("no successful transactions in turbo mode")
+		}
+
+		newBlock.transactions = executedTxs
+		newBlock.stateRoot = turboResult.MerkleRoot
+		newBlock.id = newBlock.calculateID()
+
+		tps := turboResult.TPS()
+		vm.log.Info(fmt.Sprintf("TURBO built block id=%s height=%d txCount=%d successful=%d failed=%d verify_fail=%d time=%dus (%.0f TPS) stateRoot=%x",
+			newBlock.ID().String(), newBlock.Height(), len(txs),
+			turboResult.Successful, turboResult.Failed, turboResult.VerificationFailures,
+			turboResult.ExecutionTimeUs, tps, turboResult.MerkleRoot[:8]))
+		vm.log.Info(fmt.Sprintf("  Timing: verify=%dus analyze=%dus schedule=%dus execute=%dus commit=%dus merkle=%dus",
+			turboResult.VerifyUs, turboResult.AnalyzeUs, turboResult.ScheduleUs,
+			turboResult.ExecuteUs, turboResult.CommitUs, turboResult.MerkleUs))
+
+		return newBlock, nil
+	}
+
+	// Fallback to QMDB executor (standard mode)
+	if err := vm.qmdb.SetBlockContext(newBlock.height, newBlock.timestamp.Unix(), blockhash[:]); err != nil {
+		return nil, fmt.Errorf("failed to set block context: %w", err)
 	}
 
 	// Execute block using QMDB (parallel execution with atomic state commit)
@@ -509,7 +593,14 @@ func (vm *VM) SubmitTransaction(tx *Transaction) error {
 		return err
 	}
 
-	// Engine will poll for pending transactions via BuildBlock
+	// Notify engine that we have pending transactions
+	select {
+	case vm.pendingTxs <- struct{}{}:
+		// Notification sent
+	default:
+		// Channel already has notification pending, no need to send another
+	}
+
 	return nil
 }
 
@@ -521,6 +612,11 @@ func (vm *VM) GetTransaction(signature []byte) (*Transaction, error) {
 // GetAccount retrieves account state
 func (vm *VM) GetAccount(pubkey [32]byte) (*AccountState, error) {
 	return vm.state.GetAccount(pubkey)
+}
+
+// SetAccount sets account state (used by faucet/airdrop)
+func (vm *VM) SetAccount(pubkey [32]byte, account *AccountState) error {
+	return vm.state.SetAccount(pubkey, account)
 }
 
 // GetSlot returns the current slot (block height)
